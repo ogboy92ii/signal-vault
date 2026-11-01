@@ -43,6 +43,9 @@ jobs:
       - name: Install the wasm target
         run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Never restore ~/.cargo/bin: the tari binary run below must come from this build.
+          cache-bin: false
       - name: Install the tari CLI
         run: cargo install tari-ootle-cli --version 0.33.0 --locked
       - name: tari lint
