@@ -6,7 +6,7 @@ Every check must pass, or nothing is printed as publishable. The binary is never
 it is only read, hashed and scanned. It lands in a new, empty directory of its own.
 
 Checks:
-  1. the CI run for this exact commit succeeded (every job, including reproduce and audit);
+  1. the CI run for this exact commit succeeded (every job, including reproduce and supply-chain);
   2. the download holds exactly signal_vault.wasm and signal_vault.wasm.sha256;
   3. the sha256 of the file equals the recorded one;
   4. a Sigstore-signed SLSA provenance attestation binds this exact file to this repository,
@@ -65,7 +65,7 @@ def main():
         fail("1", f"run {run['databaseId']} : {run['status']} / {run['conclusion']}")
     code, out, err = gh("run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs")
     jobs = {j["name"]: j["conclusion"] for j in json.loads(out)["jobs"]}
-    for needed in ("build", "reproduce", "audit", "end-to-end", "tari-lint"):
+    for needed in ("build", "reproduce", "supply-chain", "end-to-end", "tari-lint"):
         if jobs.get(needed) != "success":
             fail("1", f"job {needed} : {jobs.get(needed)}")
     print(f"OK 1 : run {run['databaseId']}, tous les jobs verts ({', '.join(sorted(jobs))})")

@@ -79,15 +79,19 @@ jobs:
           echo "rebuild   : $actual"
           test -n "$EXPECTED" && test "$actual" = "$EXPECTED"
 
-  audit:
-    # Known vulnerabilities (RustSec) in every crate of the committed Cargo.lock.
+  supply-chain:
+    # deny.toml: RustSec advisories, yanked versions, licences, crates.io as the only source,
+    # over every crate of the committed Cargo.lock. Then the crates compiled into the wasm must
+    # match the hand-reviewed list (reviewed-deps.txt), checksums included.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: cargo audit
-        run: cargo audit
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: cargo deny check
+        run: cargo deny check
+      - name: Crates in the wasm are the reviewed ones
+        run: python3 scripts/check_reviewed_deps.py
 
   end-to-end:
     # The scenario the product claim rests on, played against a simulated Ootle ledger:
