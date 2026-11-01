@@ -20,6 +20,42 @@ jobs:
         run: cargo clippy --release --target wasm32-unknown-unknown -- -D warnings
       - name: Report the artefact size
         run: ls -l target/wasm32-unknown-unknown/release/signal_vault.wasm
+      - name: Refuse a binary that carries personal or secret data
+        # Prints only categories and counts, never the matched text: these logs are public.
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+          data = open("target/wasm32-unknown-unknown/release/signal_vault.wasm", "rb").read()
+          text = [m.group().decode() for m in re.finditer(rb"[\x20-\x7e]{6,}", data)]
+          checks = {
+              "windows user path": r"[A-Za-z]:\\Users\\",
+              "macOS user path": r"/Users/",
+              "linux home other than the CI runner": r"/home/(?!runner/)",
+              "email address": r"[\w.+-]+@[\w-]+\.[\w.]+",
+              "github token": r"ghp_|gho_|github_pat_",
+              "private key block": r"-----BEGIN",
+              "seed or mnemonic": r"(?i)\bseed\b|mnemonic|cipherseed",
+              "password": r"(?i)passw(or)?d|keyring",
+              "ootle address": r"\botl_",
+          }
+          found = {name: sum(bool(re.search(p, s)) for s in text) for name, p in checks.items()}
+          for name, count in found.items():
+              print(f"{name}: {count}")
+          print(f"strings scanned: {len(text)}")
+          sys.exit(1 if any(found.values()) else 0)
+          EOF
+      - name: Record the binary's sha256
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          sha256sum signal_vault.wasm | tee signal_vault.wasm.sha256
+      - name: Publish the binary as a download
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal_vault-${{ github.sha }}
+          path: |
+            target/wasm32-unknown-unknown/release/signal_vault.wasm
+            target/wasm32-unknown-unknown/release/signal_vault.wasm.sha256
+          if-no-files-found: error
 
   end-to-end:
     # The scenario the product claim rests on, played against a simulated Ootle ledger:
