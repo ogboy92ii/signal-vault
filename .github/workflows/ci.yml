@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'mainnet/**']
   pull_request:
 
 jobs:
@@ -34,3 +34,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Play the full life of one signal
         run: cargo test --no-fail-fast --test end_to_end --test access_and_payment --test audit_october --test confidential_payment --test audit_second_wave -- --nocapture
+
+  tari-lint:
+    # The official template linter (manifest, metadata and size checks). Clippy already runs above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the tari CLI
+        run: cargo install tari-ootle-cli --version 0.33.0 --locked
+      - name: tari lint
+        run: tari lint --no-clippy
