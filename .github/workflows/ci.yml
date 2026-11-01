@@ -5,57 +5,89 @@ on:
     branches: [main, 'mainnet/**']
   pull_request:
 
+# Least privilege by default; only the job that signs the binary gets more.
+permissions:
+  contents: read
+
+# Third-party actions are pinned to a commit, not a tag: a tag can be moved to other code.
+# actions/checkout v4             11d5960a326750d5838078e36cf38b85af677262
+# actions/upload-artifact v4      ea165f8d65b6e75b540449e92b4886f43607fa02
+# actions/attest v4.2.2           1e69f48acb82d1966a394da916b4c1698aa569d6
+# Swatinem/rust-cache v2          d1527c8f67ef9af357290475d4af4b0fab8f12e0
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificate for the attestation
+      attestations: write # store the attestation
+      artifact-metadata: write # artifact storage record
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install the wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Test the commitment scheme
-        run: cargo test --lib --verbose
+        run: cargo test --lib --locked --verbose
       - name: Build the template
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: cargo build --release --locked --target wasm32-unknown-unknown
       - name: Lint
-        run: cargo clippy --release --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy --release --locked --target wasm32-unknown-unknown -- -D warnings
       - name: Report the artefact size
         run: ls -l target/wasm32-unknown-unknown/release/signal_vault.wasm
       - name: Refuse a binary that carries personal or secret data
-        # Prints only categories and counts, never the matched text: these logs are public.
-        run: |
-          python3 - <<'EOF'
-          import re, sys
-          data = open("target/wasm32-unknown-unknown/release/signal_vault.wasm", "rb").read()
-          text = [m.group().decode() for m in re.finditer(rb"[\x20-\x7e]{6,}", data)]
-          checks = {
-              "windows user path": r"[A-Za-z]:\\Users\\",
-              "macOS user path": r"/Users/",
-              "linux home other than the CI runner": r"/home/(?!runner/)",
-              "email address": r"[\w.+-]+@[\w-]+\.[\w.]+",
-              "github token": r"ghp_|gho_|github_pat_",
-              "private key block": r"-----BEGIN",
-              "seed or mnemonic": r"(?i)\bseed\b|mnemonic|cipherseed",
-              "password": r"(?i)passw(or)?d|keyring",
-              "ootle address": r"\botl_",
-          }
-          found = {name: sum(bool(re.search(p, s)) for s in text) for name, p in checks.items()}
-          for name, count in found.items():
-              print(f"{name}: {count}")
-          print(f"strings scanned: {len(text)}")
-          sys.exit(1 if any(found.values()) else 0)
-          EOF
+        run: python3 scripts/scan_binary.py target/wasm32-unknown-unknown/release/signal_vault.wasm
       - name: Record the binary's sha256
+        id: hash
         run: |
           cd target/wasm32-unknown-unknown/release
           sha256sum signal_vault.wasm | tee signal_vault.wasm.sha256
+          echo "sha256=$(cut -d' ' -f1 signal_vault.wasm.sha256)" >> "$GITHUB_OUTPUT"
       - name: Publish the binary as a download
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: signal_vault-${{ github.sha }}
           path: |
             target/wasm32-unknown-unknown/release/signal_vault.wasm
             target/wasm32-unknown-unknown/release/signal_vault.wasm.sha256
           if-no-files-found: error
+      - name: Sign where the binary comes from (SLSA provenance, Sigstore)
+        if: github.event_name == 'push'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/wasm32-unknown-unknown/release/signal_vault.wasm
+
+  reproduce:
+    # A second, independent build from a clean checkout and no cache must give the same bytes.
+    # If it does not, the published hash would not be checkable by anyone else.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Rebuild the template
+        run: cargo build --release --locked --target wasm32-unknown-unknown
+      - name: Compare with the build job
+        env:
+          EXPECTED: ${{ needs.build.outputs.sha256 }}
+        run: |
+          actual=$(sha256sum target/wasm32-unknown-unknown/release/signal_vault.wasm | cut -d' ' -f1)
+          echo "build job : $EXPECTED"
+          echo "rebuild   : $actual"
+          test -n "$EXPECTED" && test "$actual" = "$EXPECTED"
+
+  audit:
+    # Known vulnerabilities (RustSec) in every crate of the committed Cargo.lock.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: cargo audit
+        run: cargo audit
 
   end-to-end:
     # The scenario the product claim rests on, played against a simulated Ootle ledger:
@@ -64,21 +96,21 @@ jobs:
     # refuses to compile on Windows.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install the wasm target
         run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Play the full life of one signal
-        run: cargo test --no-fail-fast --test end_to_end --test access_and_payment --test audit_october --test confidential_payment --test audit_second_wave -- --nocapture
+        run: cargo test --locked --no-fail-fast --test end_to_end --test access_and_payment --test audit_october --test confidential_payment --test audit_second_wave -- --nocapture
 
   tari-lint:
     # The official template linter (manifest, metadata and size checks). Clippy already runs above.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install the wasm target
         run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           # Never restore ~/.cargo/bin: the tari binary run below must come from this build.
           cache-bin: false
