@@ -36,6 +36,12 @@ def gh(*args):
     return r.returncode, r.stdout, r.stderr
 
 
+def shown(path):
+    """The path with the home directory replaced by ~, so the output never shows the user name."""
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
 def fail(step, why):
     print(f"ECHEC {step} : {why}")
     print("=> NE PAS PUBLIER")
@@ -81,7 +87,7 @@ def main():
         fail("2", f"contenu inattendu : {files}")
     wasm_path = os.path.join(dest, "signal_vault.wasm")
     data = open(wasm_path, "rb").read()
-    print(f"OK 2 : artefact téléchargé dans {dest} (2 fichiers attendus, rien d'autre)")
+    print(f"OK 2 : artefact téléchargé dans {shown(dest)} (2 fichiers attendus, rien d'autre)")
 
     # 3. Hash matches the recorded one.
     digest = hashlib.sha256(data).hexdigest()
@@ -117,7 +123,7 @@ def main():
 
     print()
     print("TOUS LES CONTROLES PASSENT. Fichier vérifié :")
-    print(f"  {wasm_path}")
+    print(f"  {shown(wasm_path)}")
     print(f"  sha256 {digest}")
     print("La publication reste soumise à l'accord explicite de Soufian.")
 
