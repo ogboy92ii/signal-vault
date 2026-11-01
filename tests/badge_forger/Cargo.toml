@@ -9,7 +9,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tari_template_lib = "0.31.1"
+tari_template_lib = "0.36.0"
 
 [lib]
 crate-type = ["cdylib"]
